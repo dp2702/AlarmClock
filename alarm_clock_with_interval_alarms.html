@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Reliable Alarm Clock</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', Tahoma, sans-serif; }
+body { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; padding: 20px; color: #fff; }
+.container { max-width: 700px; margin: 0 auto; background: rgba(255,255,255,0.1); backdrop-filter: blur(10px); border-radius: 20px; padding: 30px; box-shadow: 0 8px 32px rgba(0,0,0,0.3); }
+h1 { text-align: center; margin-bottom: 10px; font-size: 2em; }
+.status { text-align: center; font-size: 0.85em; margin-bottom: 15px; opacity: 0.8; }
+.status span { display: inline-block; margin: 0 8px; padding: 3px 10px; background: rgba(0,0,0,0.2); border-radius: 12px; }
+.status .ok { background: rgba(76,175,80,0.4); }
+.status .fail { background: rgba(244,67,54,0.4); }
+.clock { text-align: center; font-size: 3.5em; font-weight: bold; margin: 20px 0; text-shadow: 2px 2px 8px rgba(0,0,0,0.3); font-variant-numeric: tabular-nums; }
+.controls { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-bottom: 20px; }
+button { padding: 10px 18px; border: none; border-radius: 10px; background: rgba(255,255,255,0.2); color: #fff; cursor: pointer; font-size: 0.95em; transition: all 0.2s; }
+button:hover { background: rgba(255,255,255,0.35); transform: translateY(-2px); }
+button.primary { background: #4CAF50; }
+button.danger { background: #f44336; }
+.form-section { background: rgba(0,0,0,0.15); padding: 20px; border-radius: 12px; margin-bottom: 20px; }
+.form-row { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+input, select, textarea { padding: 10px; border: none; border-radius: 8px; background: rgba(255,255,255,0.9); color: #333; font-size: 1em; flex: 1; min-width: 120px; }
+textarea { width: 100%; min-height: 100px; resize: vertical; font-family: monospace; }
+.alarm-list { display: flex; flex-direction: column; gap: 10px; }
+.alarm-card { background: rgba(255,255,255,0.15); padding: 15px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.alarm-card.inactive { opacity: 0.5; }
+.alarm-info { flex: 1; }
+.alarm-time { font-size: 1.5em; font-weight: bold; }
+.alarm-label { font-size: 0.9em; opacity: 0.9; }
+.alarm-sound { font-size: 0.75em; opacity: 0.7; }
+.alarm-actions { display: flex; gap: 6px; }
+.modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 1000; justify-content: center; align-items: center; padding: 20px; }
+.modal.show { display: flex; }
+.modal-content { background: linear-gradient(135deg, #667eea, #764ba2); padding: 30px; border-radius: 20px; max-width: 500px; width: 100%; max-height: 90vh; overflow-y: auto; }
+.modal h2 { margin-bottom: 15px; }
+.ringing { display: none; position: fixed; inset: 0; background: rgba(244,67,54,0.95); z-index: 2000; justify-content: center; align-items: center; flex-direction: column; padding: 20px; text-align: center; animation: flash 0.5s infinite; }
+.ringing.show { display: flex; }
+@keyframes flash { 0%, 100% { background: rgba(244,67,54,0.95); } 50% { background: rgba(180,20,20,0.95); } }
+.ringing h1 { font-size: 4em; margin-bottom: 20px; }
+.ringing button { font-size: 1.5em; padding: 20px 40px; background: #fff; color: #f44336; font-weight: bold; }
+.empty { text-align: center; opacity: 0.6; padding: 20px; }
+.helper-text { font-size: 0.82em; opacity: 0.8; margin: 4px 0 12px; line-height: 1.4; }
+.bulk-summary { font-size: 0.85em; margin-top: 8px; opacity: 0.9; }
+</style>
+</head>
+<body>
+<div class="container">
+<h1>⏰ Reliable Alarm Clock</h1>
+<div class="status">
+  <span id="statusWorker">Worker: ...</span>
+  <span id="statusWake">WakeLock: ...</span>
+  <span id="statusNotif">Notify: ...</span>
+</div>
+<div class="clock" id="clock">--:--:--</div>
+<div class="controls">
+  <button onclick="showModal('settingsModal')">⚙️ Settings</button>
+  <button onclick="showModal('importModal')">📋 Import Schedule</button>
+  <button onclick="enableAudio()">🔊 Enable Audio</button>
+</div>
+<div class="form-section">
+  <h3 style="margin-bottom:10px;">Add New Alarm</h3>
+  <div class="form-row">
+    <input type="time" id="alarmTime">
+    <input type="text" id="alarmLabel" placeholder="Label (optional)">
+  </div>
+  <div class="form-row">
+    <select id="alarmSound">
+      <option value="default">Default Sound</option>
+      <option value="aggressive">Aggressive</option>
+      <option value="beep">Classic Beep</option>
+      <option value="siren">Siren</option>
+      <option value="bell">Digital Bell</option>
+      <option value="retro" selected>Retro Ring</option>
+    </select>
+    <button class="primary" onclick="addAlarm()">➕ Add Alarm</button>
+  </div>
+</div>
+<div class="form-section">
+  <h3 style="margin-bottom:6px;">Add Interval Alarms</h3>
+  <p class="helper-text">Choose a start time, end time, and interval. For example, 11:00 to 12:00 every 15 minutes adds alarms at 11:00, 11:15, 11:30, 11:45, and 12:00.</p>
+  <div class="form-row">
+    <input type="time" id="intervalStart" aria-label="Start time">
+    <input type="time" id="intervalEnd" aria-label="End time">
+    <input type="number" id="intervalMinutes" min="1" max="1440" step="1" value="15" placeholder="Interval (minutes)" aria-label="Interval in minutes">
+  </div>
+  <div class="form-row">
+    <input type="text" id="intervalLabel" placeholder="Label (optional)">
+    <select id="intervalSound">
+      <option value="default">Default Sound</option>
+      <option value="aggressive">Aggressive</option>
+      <option value="beep">Classic Beep</option>
+      <option value="siren">Siren</option>
+      <option value="bell">Digital Bell</option>
+      <option value="retro" selected>Retro Ring</option>
+      <option value="retro-ring">Retro Ring (Custom)</option>
+      <option value="funny-honk">Funny Honk</option>
+      <option value="funny-boing">Funny Boing</option>
+      <option value="break-time-voice">Break Time Voice</option>
+    </select>
+    <button class="primary" onclick="addIntervalAlarms()">➕ Add Interval Alarms</button>
+  </div>
+  <div class="bulk-summary" id="intervalSummary">Set the times and interval to see how many alarms will be added.</div>
+</div>
+<h3 style="margin-bottom:10px;">Your Alarms</h3>
+<div class="alarm-list" id="alarmList"></div>
+</div>
+
+<div class="modal" id="settingsModal">
+  <div class="modal-content">
+    <h2>⚙️ Settings</h2>
+    <p style="margin-bottom:10px;">Default Alarm Sound:</p>
+    <div class="form-row">
+      <select id="defaultSound">
+        <option value="aggressive">Aggressive</option>
+        <option value="beep">Classic Beep</option>
+        <option value="siren">Siren</option>
+        <option value="bell">Digital Bell</option>
+        <option value="retro" selected>Retro Ring</option>
+      </select>
+      <button onclick="testSound()">🔊 Test</button>
+    </div>
+    <div style="margin-top:20px; display:flex; gap:10px; justify-content:flex-end;">
+      <button onclick="hideModal('settingsModal')">Close</button>
+      <button class="primary" onclick="saveSettings()">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="importModal">
+  <div class="modal-content">
+    <h2>📋 Import Schedule</h2>
+    <p style="margin-bottom:10px;">Paste your schedule below. "Open Time" entries will be skipped.</p>
+    <textarea id="importText" placeholder="Break  09:15 AM  09:30 AM  Schedule Changed..."></textarea>
+    <div style="margin-top:15px; display:flex; gap:10px; justify-content:flex-end;">
+      <button onclick="hideModal('importModal')">Cancel</button>
+      <button class="primary" onclick="importSchedule()">Import</button>
+    </div>
+  </div>
+</div>
+
+<div class="ringing" id="ringing">
+  <h1>🚨 ALARM 🚨</h1>
+  <div id="ringingLabel" style="font-size:2em; margin-bottom:30px;"></div>
+  <button onclick="stopAlarm()">🛑 STOP</button>
+</div>
+
+<script>
+let alarms = JSON.parse(localStorage.getItem('alarms') || '[]');
+let settings = JSON.parse(localStorage.getItem('settings') || '{"defaultSound":"aggressive"}');
+let audioCtx = null;
+let activeOscillators = [];
+let activeGains = [];
+let alarmTimeout = null;
+let isAlarmPlaying = false;
+let triggeredAlarmIds = new Set();
+let lastCheckedMinute = '';
+let wakeLock = null;
+
+// Web Worker for background-reliable timing
+const workerCode = `
+let interval = null;
+self.onmessage = function(e) {
+  if (e.data === 'start') {
+    if (interval) clearInterval(interval);
+    interval = setInterval(() => { self.postMessage('tick'); }, 1000);
+  } else if (e.data === 'stop') {
+    if (interval) { clearInterval(interval); interval = null; }
+  }
+};
+`;
+const blob = new Blob([workerCode], {type: 'application/javascript'});
+const worker = new Worker(URL.createObjectURL(blob));
+worker.onmessage = function() { tick(); };
+worker.postMessage('start');
+document.getElementById('statusWorker').textContent = 'Worker: ✓';
+document.getElementById('statusWorker').className = 'ok';
+
+// Wake Lock
+async function requestWakeLock() {
+  try {
+    if ('wakeLock' in navigator) {
+      wakeLock = await navigator.wakeLock.request('screen');
+      document.getElementById('statusWake').textContent = 'WakeLock: ✓';
+      document.getElementById('statusWake').className = 'ok';
+      wakeLock.addEventListener('release', () => {
+        document.getElementById('statusWake').textContent = 'WakeLock: released';
+      });
+    } else {
+      document.getElementById('statusWake').textContent = 'WakeLock: n/a';
+      document.getElementById('statusWake').className = 'fail';
+    }
+  } catch(e) {
+    document.getElementById('statusWake').textContent = 'WakeLock: fail';
+    document.getElementById('statusWake').className = 'fail';
+  }
+}
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) {
+    requestWakeLock();
+    tick(); // catch up
+  }
+});
+
+// Notifications
+if ('Notification' in window) {
+  if (Notification.permission === 'default') {
+    Notification.requestPermission().then(p => {
+      document.getElementById('statusNotif').textContent = 'Notify: ' + (p === 'granted' ? '✓' : '✗');
+      document.getElementById('statusNotif').className = p === 'granted' ? 'ok' : 'fail';
+    });
+  } else {
+    document.getElementById('statusNotif').textContent = 'Notify: ' + (Notification.permission === 'granted' ? '✓' : '✗');
+    document.getElementById('statusNotif').className = Notification.permission === 'granted' ? 'ok' : 'fail';
+  }
+}
+
+// Backup interval
+setInterval(tick, 1000);
+
+function tick() {
+  const now = new Date();
+  const h = String(now.getHours()).padStart(2,'0');
+  const m = String(now.getMinutes()).padStart(2,'0');
+  const s = String(now.getSeconds()).padStart(2,'0');
+  document.getElementById('clock').textContent = `${h}:${m}:${s}`;
+  const currentMinute = `${h}:${m}`;
+  if (currentMinute !== lastCheckedMinute) {
+    lastCheckedMinute = currentMinute;
+    triggeredAlarmIds.clear();
+  }
+  checkAlarms(currentMinute);
+  // Keep audio context alive
+  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+}
+
+function enableAudio() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  // Play silent tone to unlock
+  const o = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  g.gain.value = 0.001;
+  o.connect(g); g.connect(audioCtx.destination);
+  o.start(); o.stop(audioCtx.currentTime + 0.05);
+  requestWakeLock();
+  alert('Audio enabled! Alarm sound will now work.');
+}
+
+function checkAlarms(currentMinute) {
+  alarms.forEach(alarm => {
+    if (alarm.active && alarm.time === currentMinute && !triggeredAlarmIds.has(alarm.id)) {
+      triggerAlarm(alarm);
+    }
+  });
+}
+
+function triggerAlarm(alarm) {
+  triggeredAlarmIds.add(alarm.id);
+  isAlarmPlaying = true;
+  document.getElementById('ringing').classList.add('show');
+  document.getElementById('ringingLabel').textContent = alarm.label || 'Alarm';
+  const sound = alarm.sound === 'default' ? settings.defaultSound : alarm.sound;
+  playSound(sound);
+  currentRingingAlarm = alarm.id;
+  if ('Notification' in window && Notification.permission === 'granted') {
+    try {
+      new Notification('⏰ Alarm!', { body: alarm.label || alarm.time, requireInteraction: true });
+    } catch(e) {}
+  }
+}
+
+let currentRingingAlarm = null;
+
+function playSound(type) {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  stopAllSounds();
+  const play = () => {
+    if (!isAlarmPlaying) return;
+    switch(type) {
+      case 'beep': playBeep(); break;
+      case 'siren': playSiren(); break;
+      case 'bell': playBell(); break;
+      case 'retro': playRetro(); break;
+      default: playAggressive();
+    }
+    alarmTimeout = setTimeout(play, 600);
+  };
+  play();
+}
+
+function makeOsc(freq, type, vol, dur) {
+  const o = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  o.type = type; o.frequency.value = freq;
+  g.gain.value = vol;
+  o.connect(g); g.connect(audioCtx.destination);
+  o.start();
+  o.stop(audioCtx.currentTime + dur);
+  activeOscillators.push(o); activeGains.push(g);
+}
+
+function playAggressive() {
+  [880, 1100, 1320].forEach(f => makeOsc(f, 'square', 0.3, 0.2));
+}
+function playBeep() { makeOsc(800, 'sine', 0.5, 0.3); }
+function playSiren() {
+  const o = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  o.type = 'sine';
+  o.frequency.setValueAtTime(600, audioCtx.currentTime);
+  o.frequency.linearRampToValueAtTime(1200, audioCtx.currentTime + 0.3);
+  o.frequency.linearRampToValueAtTime(600, audioCtx.currentTime + 0.6);
+  g.gain.value = 0.5;
+  o.connect(g); g.connect(audioCtx.destination);
+  o.start(); o.stop(audioCtx.currentTime + 0.6);
+  activeOscillators.push(o); activeGains.push(g);
+}
+function playBell() { [1500, 2000].forEach(f => makeOsc(f, 'sine', 0.3, 0.3)); }
+function playRetro() { [1000, 1200].forEach(f => makeOsc(f, 'triangle', 0.4, 0.25)); }
+
+function stopAllSounds() {
+  activeOscillators.forEach(o => { try { o.stop(); } catch(e){} });
+  activeGains.forEach(g => { try { g.gain.value = 0; } catch(e){} });
+  activeOscillators = []; activeGains = [];
+}
+
+function stopAlarm() {
+  isAlarmPlaying = false;
+  stopAllSounds();
+  if (alarmTimeout) { clearTimeout(alarmTimeout); alarmTimeout = null; }
+  document.getElementById('ringing').classList.remove('show');
+  // Auto-remove
+  if (currentRingingAlarm !== null) {
+    alarms = alarms.filter(a => a.id !== currentRingingAlarm);
+    currentRingingAlarm = null;
+    saveAlarms(); renderAlarms();
+  }
+}
+
+function addAlarm() {
+  const time = document.getElementById('alarmTime').value;
+  const label = document.getElementById('alarmLabel').value;
+  const sound = document.getElementById('alarmSound').value;
+  if (!time) { alert('Please select a time'); return; }
+  alarms.push({ id: Date.now() + Math.random(), time, label, sound, active: true });
+  document.getElementById('alarmTime').value = '';
+  document.getElementById('alarmLabel').value = '';
+  saveAlarms(); renderAlarms();
+}
+
+function timeToMinutes(time) {
+  const parts = time.split(':').map(Number);
+  return (parts[0] * 60) + parts[1];
+}
+function minutesToTime(totalMinutes) {
+  const normalized = ((totalMinutes % 1440) + 1440) % 1440;
+  const hours = Math.floor(normalized / 60);
+  const minutes = normalized % 60;
+  return String(hours).padStart(2, '0') + ':' + String(minutes).padStart(2, '0');
+}
+function getIntervalPlan() {
+  const startValue = document.getElementById('intervalStart').value;
+  const endValue = document.getElementById('intervalEnd').value;
+  const interval = Number(document.getElementById('intervalMinutes').value);
+  if (!startValue || !endValue || !Number.isInteger(interval) || interval < 1) return null;
+  const start = timeToMinutes(startValue);
+  let end = timeToMinutes(endValue);
+  // If the end is earlier than the start, treat it as the following day.
+  if (end < start) end += 1440;
+  const times = [];
+  for (let minute = start; minute <= end; minute += interval) {
+    times.push(minutesToTime(minute));
+    if (times.length > 1440) break;
+  }
+  return { times, startValue, endValue, interval };
+}
+function updateIntervalSummary() {
+  const summary = document.getElementById('intervalSummary');
+  const plan = getIntervalPlan();
+  if (!plan) {
+    summary.textContent = 'Set the times and a valid interval to see how many alarms will be added.';
+    return;
+  }
+  const lastTime = plan.times.length ? plan.times[plan.times.length - 1] : plan.startValue;
+  summary.textContent = plan.times.length + ' alarm(s) will be added, from ' + plan.startValue + ' through ' + lastTime + '.';
+}
+function addIntervalAlarms() {
+  const plan = getIntervalPlan();
+  if (!plan) {
+    alert('Please select both times and enter a valid interval in minutes.');
+    return;
+  }
+  if (plan.times.length === 0) {
+    alert('No alarms could be created from these settings.');
+    return;
+  }
+  const label = document.getElementById('intervalLabel').value.trim();
+  const sound = document.getElementById('intervalSound').value;
+  let added = 0;
+  let skipped = 0;
+  plan.times.forEach((time, index) => {
+    const alarmLabel = label ? (plan.times.length > 1 ? label + ' ' + (index + 1) : label) : 'Interval Alarm';
+    if (alarms.some(a => a.time === time && a.label === alarmLabel)) {
+      skipped++;
+      return;
+    }
+    alarms.push({
+      id: Date.now() + index + Math.random(),
+      time,
+      label: alarmLabel,
+      sound,
+      active: true
+    });
+    added++;
+  });
+  saveAlarms();
+  renderAlarms();
+  alert('Added ' + added + ' interval alarm(s)' + (skipped ? '. Skipped ' + skipped + ' duplicate(s).' : '.'));
+}
+['intervalStart', 'intervalEnd', 'intervalMinutes'].forEach(id => {
+  document.getElementById(id).addEventListener('input', updateIntervalSummary);
+});
+
+function toggleAlarm(id) {
+  const a = alarms.find(a => a.id === id);
+  if (a) { a.active = !a.active; saveAlarms(); renderAlarms(); }
+}
+function deleteAlarm(id) {
+  alarms = alarms.filter(a => a.id !== id);
+  saveAlarms(); renderAlarms();
+}
+
+function saveAlarms() { localStorage.setItem('alarms', JSON.stringify(alarms)); }
+function saveSettings() {
+  settings.defaultSound = document.getElementById('defaultSound').value;
+  localStorage.setItem('settings', JSON.stringify(settings));
+  hideModal('settingsModal');
+}
+
+function renderAlarms() {
+  const list = document.getElementById('alarmList');
+  if (alarms.length === 0) { list.innerHTML = '<div class="empty">No alarms yet. Add one above!</div>'; return; }
+  alarms.sort((a,b) => a.time.localeCompare(b.time));
+  list.innerHTML = alarms.map(a => `
+    <div class="alarm-card ${a.active ? '' : 'inactive'}">
+      <div class="alarm-info">
+        <div class="alarm-time">${a.time}</div>
+        <div class="alarm-label">${a.label || 'Alarm'}</div>
+        <div class="alarm-sound">🔊 ${a.sound === 'default' ? 'Default (' + settings.defaultSound + ')' : a.sound}</div>
+      </div>
+      <div class="alarm-actions">
+        <button onclick="toggleAlarm(${a.id})">${a.active ? 'On' : 'Off'}</button>
+        <button class="danger" onclick="deleteAlarm(${a.id})">🗑️</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+function showModal(id) {
+  if (id === 'settingsModal') document.getElementById('defaultSound').value = settings.defaultSound;
+  document.getElementById(id).classList.add('show');
+}
+function hideModal(id) { document.getElementById(id).classList.remove('show'); }
+
+function testSound() {
+  const s = document.getElementById('defaultSound').value;
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  isAlarmPlaying = true;
+  playSound(s);
+  setTimeout(() => { isAlarmPlaying = false; stopAllSounds(); if (alarmTimeout) clearTimeout(alarmTimeout); }, 2000);
+}
+
+function importSchedule() {
+  const text = document.getElementById('importText').value;
+  const lines = text.split('\n');
+  let added = 0;
+  const timeRegex = /(\d{1,2}:\d{2}\s*(?:AM|PM))/i;
+  lines.forEach(line => {
+    if (/open\s*time/i.test(line)) return;
+    const cleaned = line.trim();
+    if (!cleaned) return;
+    const timeMatch = cleaned.match(timeRegex);
+    if (!timeMatch) return;
+    const timeStr = timeMatch[1];
+    // Get event name (text before the first time)
+    const beforeTime = cleaned.substring(0, cleaned.indexOf(timeMatch[0])).trim();
+    if (!beforeTime) return;
+    // Convert to 24h
+    const [t, ampm] = timeStr.replace(/\s+/, ' ').split(' ');
+    let [hh, mm] = t.split(':').map(Number);
+    if (/pm/i.test(ampm) && hh !== 12) hh += 12;
+    if (/am/i.test(ampm) && hh === 12) hh = 0;
+    const time24 = String(hh).padStart(2,'0') + ':' + String(mm).padStart(2,'0');
+    // Skip duplicates
+    if (alarms.some(a => a.time === time24 && a.label === beforeTime)) return;
+    alarms.push({ id: Date.now() + Math.random(), time: time24, label: beforeTime, sound: 'default', active: true });
+    added++;
+  });
+  saveAlarms(); renderAlarms(); hideModal('importModal');
+  document.getElementById('importText').value = '';
+  alert(`Imported ${added} alarm(s)!`);
+}
+
+renderAlarms();
+requestWakeLock();
+</script>
+
+<script>
+(function(){
+  function createFunnyPresets(){
+    try {
+      const sel = document.getElementById('alarmSound') || document.getElementById('soundSelect') || document.getElementById('sound');
+      if (!sel) return;
+      const opts = Array.from(sel.options).map(o => o.value);
+      const add = (value, label) => {
+        if (!opts.includes(value)) {
+          const op = document.createElement('option');
+          op.value = value; op.textContent = label; sel.appendChild(op);
+        }
+      };
+      add('retro-ring','Retro Ring');
+      add('funny-honk','Funny Honk');
+      add('funny-boing','Funny Boing');
+      add('break-time-voice','Break Time Voice');
+      if (!sel.value) sel.value = 'retro-ring'; try { localStorage.setItem('defaultAlarmSound','retro-ring'); } catch(e) {}
+      if (sel.selectedIndex === -1) sel.value = 'retro-ring'; try { localStorage.setItem('defaultAlarmSound','retro-ring'); } catch(e) {}
+    } catch(e) {}
+  }
+
+  function playToneSequence(ctx, master, sequence, done){
+    let t = ctx.currentTime;
+    sequence.forEach(s => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = s.type || 'sine';
+      osc.frequency.setValueAtTime(s.freq, t);
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.exponentialRampToValueAtTime(s.vol || 0.25, t + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + s.dur);
+      osc.connect(gain); gain.connect(master);
+      osc.start(t); osc.stop(t + s.dur + 0.02);
+      t += s.dur + (s.gap || 0.03);
+    });
+    if (done) setTimeout(done, Math.max(0, (t - ctx.currentTime) * 1000));
+  }
+
+  function speakBreakTimeTwice(){
+    try {
+      const synth = window.speechSynthesis;
+      if (!synth) return false;
+      const say = () => {
+        const u = new SpeechSynthesisUtterance('Break time');
+        u.rate = 0.95; u.pitch = 1.0; u.volume = 1.0;
+        synth.speak(u);
+      };
+      say();
+      setTimeout(say, 2000);
+      return true;
+    } catch(e){ return false; }
+  }
+
+  function installSoundEngine(){
+    if (window.__customAlarmSoundInstalled) return;
+    window.__customAlarmSoundInstalled = true;
+
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    let ctx;
+    function ensureCtx(){ if (!ctx) ctx = new AudioCtx(); if (ctx.state === 'suspended') ctx.resume(); return ctx; }
+
+    window.playCustomAlarmSound = function(kind){
+      createFunnyPresets();
+      if (kind === 'break-time-voice') {
+        if (speakBreakTimeTwice()) return;
+        kind = 'retro-ring';
+      }
+      const c = ensureCtx();
+      const master = c.createGain();
+      master.gain.value = 0.18; master.connect(c.destination);
+      if (kind === 'funny-honk') {
+        playToneSequence(c, master, [
+          {freq:220,type:'square',dur:0.12,vol:0.22},
+          {freq:180,type:'square',dur:0.12,vol:0.22,gap:0.06},
+          {freq:220,type:'square',dur:0.18,vol:0.22,gap:0.15}
+        ]);
+      } else if (kind === 'funny-boing') {
+        const start = c.currentTime;
+        const osc = c.createOscillator();
+        const gain = c.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(420, start);
+        osc.frequency.exponentialRampToValueAtTime(120, start + 0.35);
+        gain.gain.setValueAtTime(0.0001, start);
+        gain.gain.exponentialRampToValueAtTime(0.25, start + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.38);
+        osc.connect(gain); gain.connect(master); osc.start(start); osc.stop(start + 0.4);
+      } else {
+        // retro ring
+        playToneSequence(c, master, [
+          {freq:1320,type:'triangle',dur:0.10,vol:0.20,gap:0.04},
+          {freq:990,type:'triangle',dur:0.10,vol:0.20,gap:0.12},
+          {freq:1320,type:'triangle',dur:0.10,vol:0.20,gap:0.04},
+          {freq:990,type:'triangle',dur:0.12,vol:0.20,gap:0.20}
+        ]);
+      }
+    };
+
+    // Try to hook existing trigger function/button with minimal intrusion
+    const tryWrap = (name) => {
+      const fn = window[name];
+      if (typeof fn === 'function' && !fn.__wrappedForCustomSound) {
+        const wrapped = function(){
+          const sel = document.getElementById('alarmSound') || document.getElementById('soundSelect') || document.getElementById('sound');
+          const kind = sel ? sel.value : 'retro-ring';
+          try { window.playCustomAlarmSound(kind); } catch(e) {}
+          return fn.apply(this, arguments);
+        };
+        wrapped.__wrappedForCustomSound = true;
+        window[name] = wrapped;
+      }
+    };
+    ['playAlarm','triggerAlarm','ringAlarm','startAlarm','soundAlarm'].forEach(tryWrap);
+
+    document.addEventListener('click', function(e){
+      const t = e.target.closest('button');
+      if (!t) return;
+      const txt = (t.textContent || '').toLowerCase();
+      if (txt.includes('test') || txt.includes('alarm') || txt.includes('start')) {
+        const sel = document.getElementById('alarmSound') || document.getElementById('soundSelect') || document.getElementById('sound');
+        const kind = sel ? sel.value : 'retro-ring';
+        try { window.playCustomAlarmSound(kind); } catch(err) {}
+      }
+    }, true);
+
+    createFunnyPresets();
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', installSoundEngine);
+  } else {
+    installSoundEngine();
+  }
+})();
+</script>
+
+</body>
+</html>
